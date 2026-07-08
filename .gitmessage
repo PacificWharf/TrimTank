@@ -1,0 +1,81 @@
+﻿<type>(<scope>): <summary>
+
+<body>
+
+Resolves: #<issue-number>, #<issue-number>
+
+# ----------------------------------------------------------------------
+# TrimTank Commit Template Instructions (comments are NOT committed)
+# ----------------------------------------------------------------------
+# Allowed and required types:
+#
+#   feat | fix | docs | refactor | test | chore | perf | ci
+#
+# Allowed and required scopes (TrimTank architectural layers only):
+#
+#   cli | server | images | manifest | projects | export | ui
+#   docs | tests | package
+#
+# Rules:
+# - Keep the summary line under 72 characters.
+# - Keep all body/footer lines under 72 characters.
+# - Use imperative mood.
+# - Scope must represent the highest architectural layer affected.
+# - Never use feature-level scopes (crop-tool, gallery-page, etc.).
+# - Include a BREAKING CHANGE footer ONLY if incrementing major version.
+# - Only include the Resolves line if closing a GitHub issue number.
+#
+# Scope guidance:
+# - `cli`: command parsing, start command, host/port/dev/verbose
+#   behavior, console entry point, and module entry point
+# - `server`: FastAPI app, routes, middleware, static file serving,
+#   server lifecycle, dev/prod behavior, and HTTP error handling
+# - `images`: image discovery, file type filtering, image serving,
+#   thumbnailing, Pillow operations, crop processing, EXIF orientation,
+#   and output image writing
+# - `manifest`: project JSON schema, manifest reads/writes,
+#   source-to-output mappings, decisions, crop records, caption records,
+#   and manifest migration logic
+# - `projects`: project creation/opening, folder structure creation,
+#   path resolution, project validation, and project-level settings
+# - `export`: training folder export, image/caption pairing, export
+#   validation, export records, and training-ready output structure
+# - `ui`: web interface, browser-side behavior, Cropper.js integration,
+#   gallery, localStorage preferences, mobile layout, and frontend styling
+# - `docs`: README and project documentation
+# - `tests`: test-only additions or fixes
+# - `package`: pyproject.toml, packaging metadata, .gitignore,
+#   .gitmessage, dependency declarations, build tooling, and repo config
+#
+# Scope selection examples:
+# - CLI argument changes: `cli`
+# - FastAPI route changes: `server`
+# - Crop math or saved image output changes: `images`
+# - Decision/caption/crop record changes: `manifest`
+# - Project folder creation changes: `projects`
+# - Training-ready folder generation changes: `export`
+# - Browser layout or JavaScript changes: `ui`
+# - README changes only: `docs`
+# - Test-only changes: `tests`
+# - pyproject.toml or repo config changes: `package`
+#
+# ----------------------------------------------------------------------
+# Example commit message:
+# ----------------------------------------------------------------------
+# feat(projects): create default dataset folders
+#
+# Write the standard TrimTank project folders when a user creates a new
+# dataset preparation project.
+#
+# Resolves: #42
+#
+# ----------------------------------------------------------------------
+# Example commit message with breaking change:
+# ----------------------------------------------------------------------
+# refactor(manifest): require explicit crop source records
+#
+# Normalize crop records so every output image can be traced back to a
+# source image and crop rectangle.
+#
+# BREAKING CHANGE: existing manifests must add crop source records.
+#

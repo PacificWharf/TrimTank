@@ -1,0 +1,45 @@
+﻿# Project-specific local guidance
+AGENTS.md
+
+# Python cache/runtime
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build/package artifacts
+build/
+dist/
+*.egg-info/
+
+# Local config / environment
+.env
+.env.*
+*.local
+
+# Local uncommitted workspace
+.local/
+
+# Logs
+*.log
+logs/
+
+# OS/editor clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Common generated temporary artifacts
+*.tmp
+*.bak
