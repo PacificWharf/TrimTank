@@ -13,6 +13,10 @@ from typing import Any
 MANIFEST_FILENAME = "manifest.json"
 MANIFEST_SCHEMA = "trimtank.project"
 MANIFEST_SCHEMA_VERSION = 1
+INPUTS_DIRNAME = "inputs"
+TRAINING_DIRNAME = "training"
+CHECKPOINTS_DIRNAME = "checkpoints"
+PROJECT_DIRECTORIES = (INPUTS_DIRNAME, TRAINING_DIRNAME, CHECKPOINTS_DIRNAME)
 
 
 INVALID_FOLDER_NAME_CHARACTERS = set('<>:"/\\|?*')
@@ -90,6 +94,7 @@ def inspect_project(path: str) -> dict[str, Any]:
 
     exists = target.exists()
     is_directory = target.is_dir() if exists else False
+    folders = _project_folder_summary(target) if is_directory else {}
     can_create = False
     can_open = False
     project: dict[str, Any] | None = None
@@ -111,8 +116,13 @@ def inspect_project(path: str) -> dict[str, Any]:
     elif manifest_path.exists():
         manifest = _read_manifest_summary(manifest_path)
         if manifest["status"] == "valid":
-            can_open = True
-            project = manifest.get("project")
+            missing_folders = _missing_project_directories(folders)
+            if missing_folders:
+                names = ", ".join(missing_folders)
+                manifest["detail"] = f"Missing required project folders: {names}."
+            else:
+                can_open = True
+                project = manifest.get("project")
     else:
         can_create = True
 
@@ -120,6 +130,7 @@ def inspect_project(path: str) -> dict[str, Any]:
         "path": str(target),
         "exists": exists,
         "is_directory": is_directory,
+        "folders": folders,
         "manifest": manifest,
         "project": project,
         "can_open": can_open,
@@ -143,6 +154,7 @@ def create_project(path: str, name: str | None = None) -> dict[str, Any]:
     if manifest_path.exists():
         raise FileExistsError(f"Manifest already exists: {manifest_path}")
 
+    _ensure_project_directories(target)
     manifest = _new_manifest(target, name)
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -160,6 +172,7 @@ def open_project(path: str) -> dict[str, Any]:
 
     return {
         "path": inspected["path"],
+        "folders": inspected["folders"],
         "manifest": inspected["manifest"],
         "project": inspected["project"],
     }
@@ -179,8 +192,7 @@ def _new_manifest(path: Path, name: str | None) -> dict[str, Any]:
         "project": {
             "name": project_name,
         },
-        "sources": {},
-        "outputs": {},
+        "training": {},
     }
 
 
@@ -232,6 +244,8 @@ def _validate_manifest(data: Any) -> list[str]:
         errors.append(f"schema_version must be {MANIFEST_SCHEMA_VERSION}.")
     if not isinstance(data.get("project"), dict):
         errors.append("project must be an object.")
+    if not isinstance(data.get("training"), dict):
+        errors.append("training must be an object.")
 
     return errors
 
@@ -272,6 +286,35 @@ def _validate_folder_name(name: str) -> str:
         raise ValueError("Folder name contains invalid characters.")
 
     return folder_name
+
+
+def _ensure_project_directories(path: Path) -> None:
+    for dirname in PROJECT_DIRECTORIES:
+        directory = path / dirname
+        if directory.exists() and not directory.is_dir():
+            raise NotADirectoryError(f"Project path is not a folder: {directory}")
+        directory.mkdir(exist_ok=True)
+
+
+def _project_folder_summary(path: Path) -> dict[str, dict[str, object]]:
+    folders: dict[str, dict[str, object]] = {}
+    for dirname in PROJECT_DIRECTORIES:
+        directory = path / dirname
+        folders[dirname] = {
+            "path": str(directory),
+            "exists": directory.exists(),
+            "is_directory": directory.is_dir() if directory.exists() else False,
+        }
+
+    return folders
+
+
+def _missing_project_directories(folders: dict[str, dict[str, object]]) -> list[str]:
+    return [
+        dirname
+        for dirname in PROJECT_DIRECTORIES
+        if not folders.get(dirname, {}).get("is_directory")
+    ]
 
 
 def _utc_now() -> str:

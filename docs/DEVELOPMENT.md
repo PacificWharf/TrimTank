@@ -134,11 +134,21 @@ information, and verbose logging by default.
 
 TrimTank works on a user-selected project folder.
 
-A project folder contains source images, generated crops, captions, manifest
-data, and exported training-ready files.
+A project folder contains a `manifest.json` file plus standard project folders:
 
-The exact folder layout is provisional during early v1 development. Do not treat
-any early folder structure as permanent unless it is explicitly stabilized later.
+    inputs/
+    training/
+    checkpoints/
+
+The `inputs/` folder is the flat source image folder. Raw images should live
+there and should not be modified in place.
+
+The `training/` folder is the generated training-ready output folder. Future
+export/generate behavior may rebuild this folder from manifest records and write
+padded image/caption pairs such as `001.png` and `001.txt`.
+
+The `checkpoints/` folder is reserved for future LoRA checkpoint output or
+references. TrimTank does not train models in v1.
 
 Critical project data belongs on disk, not only in the browser.
 
@@ -204,13 +214,20 @@ Use a JSON manifest for persistent project state.
 
 The manifest should be human-readable and reasonably stable.
 
+The manifest should include a top-level `training` object keyed by unique source
+filenames from the flat `inputs/` folder. Each key can track the image selection
+status, crop rectangle when applicable, and caption text.
+
 The manifest should track enough information to answer:
 
-- which source image produced a crop
-- what crop rectangle was used
-- which output image was written
-- which caption file belongs to that output image
+- which `inputs/` filename a record describes
 - what decision status the source image currently has
+- what crop rectangle should be used when generating training output
+- what caption text should be written beside the generated output image
+
+The generated `training/` filenames do not need to match source filenames.
+Future generate/export behavior should assign stable padded names such as
+`001.png` and `001.txt`.
 
 The exact schema can evolve during v1.
 
@@ -300,12 +317,8 @@ for local agent continuity.
 
 These are intentionally not locked down yet:
 
-- Final project folder layout.
 - Final manifest schema.
 - Whether selected source images should be copied into a separate folder.
-- Whether captions should live beside cropped images, in a caption folder, or
-  both.
-- Final export folder layout for common LoRA trainers.
 - Whether export profiles should exist for different training tools.
 - Whether thumbnails should be generated and cached.
 - Whether project files should use relative paths only, absolute paths, or a
