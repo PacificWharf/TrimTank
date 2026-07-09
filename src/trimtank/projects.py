@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import string
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,16 @@ SUPPORTED_IMAGE_EXTENSIONS = (".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp")
 REVIEW_STATUSES = ("keep", "reject", "duplicate", "unsure")
 UNREVIEWED_STATUS = "unreviewed"
 IMAGE_STATUSES = (UNREVIEWED_STATUS, *REVIEW_STATUSES)
+TRAINING_CONFIG_FILENAME = "kohya_dataset.toml"
+DEFAULT_TRAINING_SETTINGS = {
+    "trigger_token": "",
+    "num_repeats": 10,
+    "enable_bucket": True,
+    "resolution": 1024,
+    "min_bucket_reso": 256,
+    "max_bucket_reso": 2048,
+    "bucket_reso_steps": 64,
+}
 
 
 INVALID_FOLDER_NAME_CHARACTERS = set('<>:"/\\|?*')
@@ -175,11 +186,15 @@ def open_project(path: str) -> dict[str, Any]:
         status = inspected["manifest"]["status"]
         raise ValueError(f"Folder is not a valid TrimTank project: {status}")
 
+    project_path = Path(inspected["path"])
+    manifest = _read_manifest(project_path / MANIFEST_FILENAME)
+
     return {
         "path": inspected["path"],
         "folders": inspected["folders"],
         "manifest": inspected["manifest"],
         "project": inspected["project"],
+        "settings": _manifest_settings(manifest),
     }
 
 
@@ -300,6 +315,190 @@ def update_image_crop(path: str, filename: str, crop: Any | None) -> dict[str, A
     }
 
 
+def update_project_settings(path: str, settings: Any) -> dict[str, Any]:
+    project = open_project(path)
+    project_path = Path(project["path"])
+    manifest_path = project_path / MANIFEST_FILENAME
+    manifest = _read_manifest(manifest_path)
+    manifest["settings"] = _normalize_training_settings(settings)
+    manifest["updated_at"] = _utc_now()
+    _write_manifest(manifest_path, manifest)
+
+    return {
+        "path": str(project_path),
+        "settings": manifest["settings"],
+        "buckets": get_project_bucket_stats(str(project_path)),
+    }
+
+
+def get_project_bucket_stats(path: str) -> dict[str, Any]:
+    project = open_project(path)
+    project_path = Path(project["path"])
+    manifest = _read_manifest(project_path / MANIFEST_FILENAME)
+    settings = _manifest_settings(manifest)
+    buckets: dict[str, dict[str, Any]] = {}
+    warnings: list[str] = []
+    considered = 0
+
+    for item in _kept_training_items(project_path, manifest):
+        if not item["source_path"].exists() or not _is_supported_image(item["source_path"]):
+            warnings.append(f"{item['filename']}: source image is missing or unsupported.")
+            continue
+
+        dimensions = _training_item_dimensions(item)
+        if dimensions is None:
+            try:
+                dimensions = _source_image_dimensions(item["source_path"])
+            except Exception as exc:
+                warnings.append(f"{item['filename']}: {exc}")
+                continue
+
+        considered += 1
+        bucket = _bucket_for_dimensions(dimensions["width"], dimensions["height"], settings)
+        bucket_key = f"{bucket['width']}x{bucket['height']}"
+        if bucket_key not in buckets:
+            buckets[bucket_key] = {
+                "width": bucket["width"],
+                "height": bucket["height"],
+                "count": 0,
+                "images": [],
+            }
+        buckets[bucket_key]["count"] += 1
+        buckets[bucket_key]["images"].append(
+            {
+                "filename": item["filename"],
+                "width": dimensions["width"],
+                "height": dimensions["height"],
+                "uses_crop": item["crop"] is not None,
+            }
+        )
+
+    bucket_list = sorted(
+        buckets.values(),
+        key=lambda item: (item["width"] * item["height"], item["width"], item["height"]),
+    )
+
+    return {
+        "path": str(project_path),
+        "settings": settings,
+        "total_images": considered,
+        "bucket_count": len(bucket_list),
+        "buckets": bucket_list,
+        "warnings": warnings,
+    }
+
+
+def prepare_training(path: str, confirm_clear_training: bool = False) -> dict[str, Any]:
+    if not confirm_clear_training:
+        raise ValueError("Preparing training files requires confirmation.")
+
+    project = open_project(path)
+    project_path = Path(project["path"])
+    training_path = project_path / TRAINING_DIRNAME
+    manifest_path = project_path / MANIFEST_FILENAME
+    manifest = _read_manifest(manifest_path)
+    settings = _manifest_settings(manifest)
+    trigger_token = settings["trigger_token"].strip()
+    if not trigger_token:
+        raise ValueError("A trigger token is required before preparing training files.")
+
+    _require_pillow()
+    _clear_directory_contents(training_path)
+    _clear_prepared_records(manifest)
+
+    generated: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    for item in _kept_training_items(project_path, manifest):
+        try:
+            prepared = _prepare_training_item(
+                item=item,
+                output_index=len(generated) + 1,
+                training_path=training_path,
+                trigger_token=trigger_token,
+            )
+        except Exception as exc:
+            warnings.append(f"{item['filename']}: {exc}")
+            continue
+
+        record = manifest["training"][item["filename"]]
+        record["prepared"] = {
+            "image": prepared["image"],
+            "caption": prepared["caption"],
+            "source": item["filename"],
+            "width": prepared["width"],
+            "height": prepared["height"],
+            "uses_crop": item["crop"] is not None,
+        }
+        generated.append(prepared)
+
+    config_path = training_path / TRAINING_CONFIG_FILENAME
+    config_path.write_text(_kohya_config_text(training_path, settings), encoding="utf-8")
+
+    manifest["settings"] = settings
+    manifest["prepared_at"] = _utc_now()
+    manifest["updated_at"] = manifest["prepared_at"]
+    _write_manifest(manifest_path, manifest)
+    bucket_stats = get_project_bucket_stats(str(project_path))
+
+    return {
+        "path": str(project_path),
+        "training_path": str(training_path),
+        "count": len(generated),
+        "generated": generated,
+        "config": TRAINING_CONFIG_FILENAME,
+        "buckets": bucket_stats,
+        "warnings": warnings,
+    }
+
+
+def list_training_outputs(path: str) -> dict[str, Any]:
+    project = open_project(path)
+    project_path = Path(project["path"])
+    training_path = project_path / TRAINING_DIRNAME
+    outputs: list[dict[str, Any]] = []
+
+    for image_path in sorted(training_path.glob("*.png"), key=lambda item: item.name.casefold()):
+        caption_path = image_path.with_suffix(".txt")
+        caption = caption_path.read_text(encoding="utf-8") if caption_path.exists() else ""
+        outputs.append(
+            {
+                "filename": image_path.name,
+                "caption_filename": caption_path.name,
+                "caption": caption,
+                "size": image_path.stat().st_size,
+            }
+        )
+
+    config_path = training_path / TRAINING_CONFIG_FILENAME
+    return {
+        "project": project,
+        "training_path": str(training_path),
+        "config": {
+            "filename": TRAINING_CONFIG_FILENAME,
+            "exists": config_path.exists(),
+            "content": config_path.read_text(encoding="utf-8") if config_path.exists() else "",
+        },
+        "outputs": outputs,
+    }
+
+
+def get_training_image_path(path: str, filename: str) -> Path:
+    project = open_project(path)
+    project_path = Path(project["path"])
+    safe_filename = _validate_source_filename(filename)
+    if Path(safe_filename).suffix.casefold() != ".png":
+        raise ValueError("Training image filename must end in .png.")
+
+    image_path = project_path / TRAINING_DIRNAME / safe_filename
+    if not image_path.exists():
+        raise FileNotFoundError(f"Training image does not exist: {safe_filename}")
+    if not image_path.is_file():
+        raise ValueError(f"Training path is not a file: {safe_filename}")
+
+    return image_path
+
+
 def get_source_image_path(path: str, filename: str) -> Path:
     project = open_project(path)
     project_path = Path(project["path"])
@@ -312,6 +511,240 @@ def get_source_image_path(path: str, filename: str) -> Path:
         raise ValueError(f"Source file is not a supported image: {safe_filename}")
 
     return source_path
+
+
+def _manifest_settings(manifest: dict[str, Any]) -> dict[str, Any]:
+    return _normalize_training_settings(manifest.get("settings", {}))
+
+
+def _normalize_training_settings(settings: Any) -> dict[str, Any]:
+    source = settings if isinstance(settings, dict) else {}
+    normalized = dict(DEFAULT_TRAINING_SETTINGS)
+    normalized["trigger_token"] = str(source.get("trigger_token", "")).strip()
+    normalized["num_repeats"] = _settings_int(source, "num_repeats", 10, 1, 1000)
+    normalized["enable_bucket"] = bool(source.get("enable_bucket", True))
+    normalized["resolution"] = _settings_int(source, "resolution", 1024, 64, 4096)
+    normalized["min_bucket_reso"] = _settings_int(source, "min_bucket_reso", 256, 64, 4096)
+    normalized["max_bucket_reso"] = _settings_int(source, "max_bucket_reso", 2048, 64, 4096)
+    normalized["bucket_reso_steps"] = _settings_int(source, "bucket_reso_steps", 64, 1, 512)
+
+    if normalized["min_bucket_reso"] > normalized["max_bucket_reso"]:
+        raise ValueError("Minimum bucket resolution must be less than or equal to maximum.")
+
+    return normalized
+
+
+def _settings_int(
+    settings: dict[str, Any],
+    key: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = settings.get(key, default)
+    if isinstance(value, bool):
+        raise ValueError(f"{key} must be a number.")
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} must be a number.") from exc
+
+    if number < minimum or number > maximum:
+        raise ValueError(f"{key} must be between {minimum} and {maximum}.")
+
+    return number
+
+
+def _kept_training_items(project_path: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    training = manifest.get("training", {})
+    if not isinstance(training, dict):
+        return items
+
+    for filename, record in sorted(training.items(), key=lambda item: item[0].casefold()):
+        if _record_status(record) != "keep":
+            continue
+
+        try:
+            safe_filename = _validate_source_filename(filename)
+        except ValueError:
+            continue
+
+        items.append(
+            {
+                "filename": safe_filename,
+                "record": record,
+                "crop": _record_crop(record),
+                "source_path": project_path / INPUTS_DIRNAME / safe_filename,
+            }
+        )
+
+    return items
+
+
+def _training_item_dimensions(item: dict[str, Any]) -> dict[str, int] | None:
+    crop = item.get("crop")
+    if not crop:
+        return None
+
+    return {
+        "width": crop["width"],
+        "height": crop["height"],
+    }
+
+
+def _source_image_dimensions(source_path: Path) -> dict[str, int]:
+    Image, ImageOps = _pillow_modules()
+    with Image.open(source_path) as image:
+        image = ImageOps.exif_transpose(image)
+        width, height = image.size
+
+    return {"width": width, "height": height}
+
+
+def _bucket_for_dimensions(width: int, height: int, settings: dict[str, Any]) -> dict[str, int]:
+    resolution = settings["resolution"]
+    if not settings["enable_bucket"]:
+        return {"width": resolution, "height": resolution}
+
+    step = settings["bucket_reso_steps"]
+    min_resolution = settings["min_bucket_reso"]
+    max_resolution = settings["max_bucket_reso"]
+    aspect_ratio = width / height
+    target_area = resolution * resolution
+    bucket_width = math.sqrt(target_area * aspect_ratio)
+    bucket_height = target_area / bucket_width
+    bucket_width = _round_to_step(bucket_width, step)
+    bucket_height = _round_to_step(bucket_height, step)
+    bucket_width = _clamp_int(bucket_width, min_resolution, max_resolution)
+    bucket_height = _clamp_int(bucket_height, min_resolution, max_resolution)
+
+    return {
+        "width": bucket_width,
+        "height": bucket_height,
+    }
+
+
+def _round_to_step(value: float, step: int) -> int:
+    return max(step, round(value / step) * step)
+
+
+def _clamp_int(value: int, minimum: int, maximum: int) -> int:
+    return min(max(value, minimum), maximum)
+
+
+def _prepare_training_item(
+    item: dict[str, Any],
+    output_index: int,
+    training_path: Path,
+    trigger_token: str,
+) -> dict[str, Any]:
+    Image, ImageOps = _pillow_modules()
+    source_path = item["source_path"]
+    if not source_path.exists():
+        raise FileNotFoundError("Source image does not exist.")
+    if not _is_supported_image(source_path):
+        raise ValueError("Source file is not a supported image.")
+
+    with Image.open(source_path) as source_image:
+        image = ImageOps.exif_transpose(source_image)
+        image.load()
+        crop = item["crop"]
+        if crop is not None:
+            _validate_crop_within_image(crop, image.width, image.height)
+            image = image.crop(
+                (
+                    crop["x"],
+                    crop["y"],
+                    crop["x"] + crop["width"],
+                    crop["y"] + crop["height"],
+                )
+            )
+
+        output = image.convert("RGB")
+        image_name = f"{output_index:03d}.png"
+        caption_name = f"{output_index:03d}.txt"
+        output.save(training_path / image_name, format="PNG")
+        (training_path / caption_name).write_text(f"{trigger_token}\n", encoding="utf-8")
+
+    return {
+        "source": item["filename"],
+        "image": image_name,
+        "caption": caption_name,
+        "width": output.width,
+        "height": output.height,
+    }
+
+
+def _validate_crop_within_image(crop: dict[str, int], width: int, height: int) -> None:
+    if crop["x"] + crop["width"] > width or crop["y"] + crop["height"] > height:
+        raise ValueError("Crop rectangle extends outside the source image.")
+
+
+def _clear_directory_contents(path: Path) -> None:
+    path.mkdir(exist_ok=True)
+    for entry in path.iterdir():
+        if entry.is_symlink() or entry.is_file():
+            entry.unlink()
+        elif entry.is_dir():
+            shutil.rmtree(entry)
+
+
+def _clear_prepared_records(manifest: dict[str, Any]) -> None:
+    training = manifest.get("training", {})
+    if not isinstance(training, dict):
+        return
+
+    for record in training.values():
+        if isinstance(record, dict):
+            record.pop("prepared", None)
+
+
+def _kohya_config_text(training_path: Path, settings: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "[general]",
+            'caption_extension = ".txt"',
+            f"enable_bucket = {_toml_bool(settings['enable_bucket'])}",
+            "bucket_no_upscale = false",
+            f"bucket_reso_steps = {settings['bucket_reso_steps']}",
+            f"min_bucket_reso = {settings['min_bucket_reso']}",
+            f"max_bucket_reso = {settings['max_bucket_reso']}",
+            "",
+            "[[datasets]]",
+            f"resolution = [{settings['resolution']}, {settings['resolution']}]",
+            "batch_size = 1",
+            "",
+            "  [[datasets.subsets]]",
+            f"  image_dir = {_toml_string(str(training_path))}",
+            f"  num_repeats = {settings['num_repeats']}",
+            f"  class_tokens = {_toml_string(settings['trigger_token'])}",
+            "",
+        ]
+    )
+
+
+def _toml_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _toml_string(value: str) -> str:
+    return json.dumps(value)
+
+
+def _require_pillow() -> None:
+    _pillow_modules()
+
+
+def _pillow_modules() -> tuple[Any, Any]:
+    try:
+        from PIL import Image, ImageOps
+    except ImportError as exc:
+        raise RuntimeError(
+            "Pillow is required for image preparation. Install project dependencies first."
+        ) from exc
+
+    return Image, ImageOps
 
 
 def _new_manifest(path: Path, name: str | None) -> dict[str, Any]:
@@ -328,6 +761,7 @@ def _new_manifest(path: Path, name: str | None) -> dict[str, Any]:
         "project": {
             "name": project_name,
         },
+        "settings": dict(DEFAULT_TRAINING_SETTINGS),
         "training": {},
     }
 

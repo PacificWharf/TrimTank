@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}Review Training - {{ app_name }}{% endblock %}
+
+{% block body %}
+<main class="page-shell" data-page="training-review">
+  <header class="page-title">
+    <div>
+      <h1>Training Review</h1>
+      <p id="training-review-path">No project selected.</p>
+    </div>
+    <a class="text-link" href="/">Back to project</a>
+  </header>
+
+  <section class="training-review-panel" aria-labelledby="training-review-title">
+    <div class="panel-heading">
+      <div>
+        <h2 id="training-review-title">Prepared Images</h2>
+        <p id="training-review-summary">Load prepared training outputs.</p>
+      </div>
+      <span class="status-pill" id="training-review-count">0 images</span>
+    </div>
+
+    <p class="status-message review-message" id="training-review-message" role="status"></p>
+    <div class="training-output-grid" id="training-output-grid" aria-live="polite"></div>
+  </section>
+</main>
+{% endblock %}

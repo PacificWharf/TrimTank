@@ -17,10 +17,15 @@ from .projects import (
     create_project,
     get_filesystem_roots,
     get_source_image_path,
+    get_project_bucket_stats,
+    get_training_image_path,
     inspect_project,
+    list_training_outputs,
     list_project_images,
     open_project,
+    prepare_training,
     update_image_crop,
+    update_project_settings,
     update_image_status,
 )
 
@@ -52,6 +57,16 @@ class ImageCropRequest(BaseModel):
     filename: str
     crop: dict[str, float] | None = None
 
+
+class ProjectSettingsUpdateRequest(BaseModel):
+    path: str
+    settings: dict[str, object]
+
+
+class PrepareTrainingRequest(BaseModel):
+    path: str
+    confirm_clear_training: bool = False
+
 def create_app(dev: bool = False) -> FastAPI:
     version = get_version()
     app = FastAPI(title=APP_NAME, version=version)
@@ -70,6 +85,18 @@ def create_app(dev: bool = False) -> FastAPI:
         return templates.TemplateResponse(
             request=request,
             name="index.html",
+            context={
+                "app_name": APP_NAME,
+                "version": version,
+                "dev": dev,
+            },
+        )
+
+    @app.get("/review", response_class=HTMLResponse)
+    async def training_review(request: Request) -> Response:
+        return templates.TemplateResponse(
+            request=request,
+            name="review.html",
             context={
                 "app_name": APP_NAME,
                 "version": version,
@@ -161,6 +188,42 @@ def create_app(dev: bool = False) -> FastAPI:
         except Exception as exc:
             raise _filesystem_error(exc) from exc
 
+    @app.post("/api/projects/settings")
+    async def project_settings(payload: ProjectSettingsUpdateRequest) -> dict[str, object]:
+        try:
+            return update_project_settings(payload.path, payload.settings)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
+    @app.get("/api/projects/buckets")
+    async def project_buckets(path: str = Query()) -> dict[str, object]:
+        try:
+            return get_project_bucket_stats(path)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
+    @app.post("/api/projects/prepare")
+    async def project_prepare(payload: PrepareTrainingRequest) -> dict[str, object]:
+        try:
+            return prepare_training(payload.path, payload.confirm_clear_training)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
+    @app.get("/api/projects/training")
+    async def project_training(path: str = Query()) -> dict[str, object]:
+        try:
+            return list_training_outputs(path)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
+    @app.get("/api/projects/training/image")
+    async def project_training_image(path: str = Query(), filename: str = Query()) -> FileResponse:
+        try:
+            image_path = get_training_image_path(path, filename)
+            return FileResponse(image_path)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
     return app
 
 def _filesystem_error(exc: Exception) -> HTTPException:
@@ -170,5 +233,7 @@ def _filesystem_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, (FileExistsError, NotADirectoryError, ValueError)):
         return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, RuntimeError):
+        return HTTPException(status_code=500, detail=str(exc))
 
     return HTTPException(status_code=500, detail="Unexpected filesystem error.")

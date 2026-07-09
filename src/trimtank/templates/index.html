@@ -92,6 +92,62 @@
     <div class="image-grid" id="image-grid" aria-live="polite"></div>
   </section>
 
+  <section class="training-panel" id="training-prep" hidden aria-labelledby="training-prep-title">
+    <div class="panel-heading">
+      <div>
+        <h2 id="training-prep-title">Training Prep</h2>
+        <p>Prepare reviewed images for Kohya training.</p>
+      </div>
+      <a class="text-link" id="review-training-link" href="/review" hidden>Review prepared images</a>
+    </div>
+
+    <div class="training-settings-grid">
+      <label>
+        <span class="field-label">Trigger token</span>
+        <input type="text" id="training-trigger-token" autocomplete="off" placeholder="example_token">
+      </label>
+
+      <label>
+        <span class="field-label">Repeats</span>
+        <input type="number" id="training-num-repeats" min="1" max="1000" step="1">
+      </label>
+
+      <label class="toggle-field">
+        <input type="checkbox" id="training-enable-bucket">
+        <span>Enable buckets</span>
+      </label>
+
+      <label>
+        <span class="field-label">Target resolution</span>
+        <input type="number" id="training-resolution" min="64" max="4096" step="64">
+      </label>
+
+      <label>
+        <span class="field-label">Min bucket</span>
+        <input type="number" id="training-min-bucket" min="64" max="4096" step="64">
+      </label>
+
+      <label>
+        <span class="field-label">Max bucket</span>
+        <input type="number" id="training-max-bucket" min="64" max="4096" step="64">
+      </label>
+
+      <label>
+        <span class="field-label">Bucket step</span>
+        <input type="number" id="training-bucket-step" min="1" max="512" step="1">
+      </label>
+    </div>
+
+    <div class="training-actions">
+      <button type="button" id="save-training-settings">Save Settings</button>
+      <button type="button" id="refresh-bucket-stats">Refresh Buckets</button>
+      <button type="button" id="prepare-training">Prepare for Training</button>
+    </div>
+
+    <div class="bucket-summary" id="bucket-summary" aria-live="polite"></div>
+    <p class="status-message training-message" id="training-message" role="status"></p>
+  </section>
+
 
   <div class="crop-dialog" id="crop-dialog" hidden>
     <div class="crop-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="crop-dialog-title">
@@ -133,6 +189,27 @@
       </div>
 
       <p class="status-message crop-message" id="crop-message" role="status"></p>
+    </div>
+  </div>
+
+  <div class="confirm-dialog" id="prepare-confirm-dialog" hidden>
+    <div class="confirm-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="prepare-confirm-title">
+      <div class="dialog-heading">
+        <div>
+          <h2 id="prepare-confirm-title">Prepare for Training</h2>
+          <p>This will erase every file currently in the project training folder.</p>
+        </div>
+      </div>
+
+      <div class="confirm-dialog-body">
+        <p>TrimTank will regenerate numbered PNG images, matching TXT captions, and a Kohya dataset config.</p>
+        <p id="prepare-confirm-path"></p>
+      </div>
+
+      <div class="confirm-dialog-actions">
+        <button type="button" class="ghost-button" id="cancel-prepare-training">Cancel</button>
+        <button type="button" id="confirm-prepare-training">Erase and Prepare</button>
+      </div>
     </div>
   </div>
 

@@ -111,8 +111,19 @@ button:focus-visible {
   font-size: 0.875rem;
 }
 
+.text-link {
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+.text-link:hover {
+  text-decoration: underline;
+}
+
 .project-panel,
-.workspace-panel {
+.workspace-panel,
+.training-panel,
+.training-review-panel {
   margin-top: 24px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -232,7 +243,9 @@ button:focus-visible {
 }
 
 .folder-dialog[hidden],
-.workspace-panel[hidden] {
+.workspace-panel[hidden],
+.training-panel[hidden],
+.confirm-dialog[hidden] {
   display: none;
 }
 
@@ -555,6 +568,155 @@ button:focus-visible {
 
 .review-panel[hidden] {
   display: none;
+}
+
+.training-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.training-settings-grid label {
+  display: grid;
+  gap: 8px;
+}
+
+.toggle-field {
+  align-content: end;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  min-height: 64px;
+  color: var(--text-soft);
+}
+
+.toggle-field input {
+  width: auto;
+  min-height: auto;
+}
+
+.training-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bucket-summary {
+  display: grid;
+  gap: 10px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bucket-summary:empty {
+  display: none;
+}
+
+.bucket-summary-heading {
+  color: var(--text-soft);
+  font-size: 0.9375rem;
+}
+
+.bucket-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bucket-chip {
+  border: 1px solid #3a4654;
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--text-soft);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.bucket-warnings {
+  margin: 0;
+  color: var(--warning);
+  font-size: 0.875rem;
+}
+
+.training-message {
+  padding: 14px 20px;
+}
+
+.confirm-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(6, 8, 11, 0.82);
+}
+
+.confirm-dialog-panel {
+  width: min(560px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+}
+
+.confirm-dialog-body {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.confirm-dialog-body p {
+  margin: 0;
+  color: var(--text-soft);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px;
+}
+
+.training-output-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  padding: 20px;
+}
+
+.caption-preview {
+  min-height: 2.6rem;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .training-settings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .training-settings-grid,
+  .training-output-grid {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .confirm-dialog {
+    padding: 12px;
+  }
 }
 
 .crop-badge {
