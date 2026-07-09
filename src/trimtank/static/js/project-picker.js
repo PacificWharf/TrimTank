@@ -338,6 +338,11 @@ function activateProject(elements, data) {
   elements.workspaceManifest.textContent = `${data.manifest.status} / schema ${data.manifest.schema_version}`;
   setProjectState(elements, "Project open", "ok");
   setProjectMessage(elements, `${projectName} is open.`, "ok");
+  announceProjectOpened(data);
+}
+
+function announceProjectOpened(data) {
+  window.dispatchEvent(new CustomEvent("trimtank:project-opened", { detail: data }));
 }
 
 function renderRecentProjects(elements) {

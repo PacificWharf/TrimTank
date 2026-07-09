@@ -17,6 +17,10 @@ INPUTS_DIRNAME = "inputs"
 TRAINING_DIRNAME = "training"
 CHECKPOINTS_DIRNAME = "checkpoints"
 PROJECT_DIRECTORIES = (INPUTS_DIRNAME, TRAINING_DIRNAME, CHECKPOINTS_DIRNAME)
+SUPPORTED_IMAGE_EXTENSIONS = (".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp")
+REVIEW_STATUSES = ("keep", "reject", "duplicate", "unsure")
+UNREVIEWED_STATUS = "unreviewed"
+IMAGE_STATUSES = (UNREVIEWED_STATUS, *REVIEW_STATUSES)
 
 
 INVALID_FOLDER_NAME_CHARACTERS = set('<>:"/\\|?*')
@@ -178,6 +182,96 @@ def open_project(path: str) -> dict[str, Any]:
     }
 
 
+def list_project_images(path: str) -> dict[str, Any]:
+    project = open_project(path)
+    project_path = Path(project["path"])
+    manifest = _read_manifest(project_path / MANIFEST_FILENAME)
+    inputs_path = project_path / INPUTS_DIRNAME
+
+    images: list[dict[str, Any]] = []
+    for entry in sorted(inputs_path.iterdir(), key=lambda item: item.name.casefold()):
+        if not _is_supported_image(entry):
+            continue
+
+        record = manifest["training"].get(entry.name, {})
+        status = _record_status(record)
+        images.append(
+            {
+                "filename": entry.name,
+                "status": status,
+                "size": entry.stat().st_size,
+            }
+        )
+
+    return {
+        "project": project,
+        "inputs_path": str(inputs_path),
+        "images": images,
+        "statuses": {
+            "default": UNREVIEWED_STATUS,
+            "review": list(REVIEW_STATUSES),
+            "all": list(IMAGE_STATUSES),
+        },
+        "counts": _status_counts(images),
+    }
+
+
+def update_image_status(path: str, filename: str, status: str) -> dict[str, Any]:
+    normalized_status = status.strip().casefold()
+    if normalized_status not in IMAGE_STATUSES:
+        allowed = ", ".join(IMAGE_STATUSES)
+        raise ValueError(f"Status must be one of: {allowed}.")
+
+    project = open_project(path)
+    project_path = Path(project["path"])
+    source_path = get_source_image_path(str(project_path), filename)
+    manifest_path = project_path / MANIFEST_FILENAME
+    manifest = _read_manifest(manifest_path)
+    training = manifest["training"]
+    record = training.get(source_path.name)
+
+    if normalized_status == UNREVIEWED_STATUS:
+        if record is None:
+            pass
+        elif not isinstance(record, dict):
+            raise ValueError(f"Training record for {source_path.name} must be an object.")
+        else:
+            record.pop("status", None)
+            if not record:
+                training.pop(source_path.name)
+    else:
+        if record is None:
+            record = {}
+            training[source_path.name] = record
+        elif not isinstance(record, dict):
+            raise ValueError(f"Training record for {source_path.name} must be an object.")
+
+        record["status"] = normalized_status
+
+    manifest["updated_at"] = _utc_now()
+    _write_manifest(manifest_path, manifest)
+
+    return {
+        "filename": source_path.name,
+        "status": _record_status(training.get(source_path.name, {})),
+        "counts": list_project_images(str(project_path))["counts"],
+    }
+
+
+def get_source_image_path(path: str, filename: str) -> Path:
+    project = open_project(path)
+    project_path = Path(project["path"])
+    safe_filename = _validate_source_filename(filename)
+    source_path = project_path / INPUTS_DIRNAME / safe_filename
+
+    if not source_path.exists():
+        raise FileNotFoundError(f"Source image does not exist: {safe_filename}")
+    if not source_path.is_file() or not _is_supported_image(source_path):
+        raise ValueError(f"Source file is not a supported image: {safe_filename}")
+
+    return source_path
+
+
 def _new_manifest(path: Path, name: str | None) -> dict[str, Any]:
     timestamp = _utc_now()
     project_name = name.strip() if name and name.strip() else path.name
@@ -198,7 +292,7 @@ def _new_manifest(path: Path, name: str | None) -> dict[str, Any]:
 
 def _read_manifest_summary(manifest_path: Path) -> dict[str, Any]:
     try:
-        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        data = _read_manifest(manifest_path)
     except json.JSONDecodeError as exc:
         return {
             "status": "invalid",
@@ -211,13 +305,11 @@ def _read_manifest_summary(manifest_path: Path) -> dict[str, Any]:
             "path": str(manifest_path),
             "detail": str(exc),
         }
-
-    errors = _validate_manifest(data)
-    if errors:
+    except ValueError as exc:
         return {
             "status": "invalid",
             "path": str(manifest_path),
-            "detail": " ".join(errors),
+            "detail": str(exc),
         }
 
     project = data["project"]
@@ -248,6 +340,28 @@ def _validate_manifest(data: Any) -> list[str]:
         errors.append("training must be an object.")
 
     return errors
+
+
+def _read_manifest(manifest_path: Path) -> dict[str, Any]:
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    errors = _validate_manifest(data)
+    if errors:
+        raise ValueError(" ".join(errors))
+
+    return data
+
+
+def _write_manifest(manifest_path: Path, data: dict[str, Any]) -> None:
+    errors = _validate_manifest(data)
+    if errors:
+        raise ValueError(" ".join(errors))
+
+    temporary_path = manifest_path.with_suffix(f"{manifest_path.suffix}.tmp")
+    temporary_path.write_text(
+        json.dumps(data, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary_path.replace(manifest_path)
 
 
 def _path_from_input(path: str) -> Path:
@@ -288,6 +402,48 @@ def _validate_folder_name(name: str) -> str:
     return folder_name
 
 
+def _validate_source_filename(filename: str) -> str:
+    source_filename = filename.strip()
+    if not source_filename:
+        raise ValueError("Source filename is required.")
+    if source_filename in {".", ".."}:
+        raise ValueError("Source filename cannot be . or ..")
+    if Path(source_filename).name != source_filename:
+        raise ValueError("Source filename must not include a folder path.")
+    if "/" in source_filename or "\\" in source_filename:
+        raise ValueError("Source filename must not include a folder path.")
+
+    return source_filename
+
+
+def _is_supported_image(path: Path) -> bool:
+    try:
+        return path.is_file() and path.suffix.casefold() in SUPPORTED_IMAGE_EXTENSIONS
+    except OSError:
+        return False
+
+
+def _record_status(record: Any) -> str:
+    if isinstance(record, dict):
+        status = record.get("status")
+        if isinstance(status, str) and status in REVIEW_STATUSES:
+            return status
+
+    return UNREVIEWED_STATUS
+
+
+def _status_counts(images: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {status: 0 for status in IMAGE_STATUSES}
+    counts["total"] = len(images)
+
+    for image in images:
+        status = image.get("status")
+        if status in counts:
+            counts[status] += 1
+
+    return counts
+
+
 def _ensure_project_directories(path: Path) -> None:
     for dirname in PROJECT_DIRECTORIES:
         directory = path / dirname
@@ -319,4 +475,3 @@ def _missing_project_directories(folders: dict[str, dict[str, object]]) -> list[
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-

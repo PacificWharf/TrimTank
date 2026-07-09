@@ -1,3 +1,4 @@
+import { initImageReview } from "./image-review.js";
 import { initProjectPicker } from "./project-picker.js";
 
 function markJavaScriptReady() {
@@ -7,6 +8,7 @@ function markJavaScriptReady() {
 function init() {
   markJavaScriptReady();
   initProjectPicker();
+  initImageReview();
 }
 
 if (document.readyState === "loading") {

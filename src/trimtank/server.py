@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -16,8 +16,11 @@ from .projects import (
     create_directory,
     create_project,
     get_filesystem_roots,
+    get_source_image_path,
     inspect_project,
+    list_project_images,
     open_project,
+    update_image_status,
 )
 
 
@@ -35,6 +38,12 @@ class CreateFolderRequest(BaseModel):
 class ProjectPathRequest(BaseModel):
     path: str
     name: str | None = None
+
+
+class ImageStatusRequest(BaseModel):
+    path: str
+    filename: str
+    status: str
 
 
 def create_app(dev: bool = False) -> FastAPI:
@@ -114,6 +123,28 @@ def create_app(dev: bool = False) -> FastAPI:
     async def project_open(payload: ProjectPathRequest) -> dict[str, object]:
         try:
             return open_project(payload.path)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
+    @app.get("/api/projects/images")
+    async def project_images(path: str = Query()) -> dict[str, object]:
+        try:
+            return list_project_images(path)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
+    @app.get("/api/projects/images/source")
+    async def project_image_source(path: str = Query(), filename: str = Query()) -> FileResponse:
+        try:
+            source_path = get_source_image_path(path, filename)
+            return FileResponse(source_path)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
+    @app.post("/api/projects/images/status")
+    async def project_image_status(payload: ImageStatusRequest) -> dict[str, object]:
+        try:
+            return update_image_status(payload.path, payload.filename, payload.status)
         except Exception as exc:
             raise _filesystem_error(exc) from exc
 

@@ -198,15 +198,21 @@ The core v1 workflows are:
 7. Review cropped/captioned outputs.
 8. Export a clean training-ready image/caption set.
 
-Supported image decisions should include:
+Formal persisted review statuses are:
 
 - keep
 - reject
 - duplicate
 - unsure
 
+Images with no persisted status are treated as `unreviewed` in the UI and API.
+`unreviewed` is a workflow state for filtering and reset behavior, not a final
+decision. This keeps new source images visible without forcing a manifest record
+for every file before review starts.
+
 Decision labels may be refined later, but v1 should preserve the ability to
-distinguish usable images, rejected images, duplicates, and unresolved images.
+distinguish usable images, rejected images, duplicates, unresolved images, and
+images that have not been reviewed yet.
 
 ## Manifest
 

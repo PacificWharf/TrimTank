@@ -65,6 +65,33 @@
     </dl>
   </section>
 
+  <section class="review-panel" id="image-review" hidden aria-labelledby="image-review-title">
+    <div class="panel-heading">
+      <div>
+        <h2 id="image-review-title">Image Review</h2>
+        <p id="review-source-path">inputs/</p>
+      </div>
+      <span class="status-pill" id="review-count">0 images</span>
+    </div>
+
+    <div class="review-toolbar">
+      <label class="field-label" for="review-status-filter">Status</label>
+      <select id="review-status-filter" aria-label="Review status filter">
+        <option value="all">All statuses</option>
+        <option value="unreviewed">Unreviewed</option>
+        <option value="keep">Keep</option>
+        <option value="reject">Reject</option>
+        <option value="duplicate">Duplicate</option>
+        <option value="unsure">Unsure</option>
+      </select>
+      <button type="button" id="refresh-images">Refresh</button>
+      <div class="status-counts" id="review-status-counts" aria-live="polite"></div>
+    </div>
+
+    <p class="status-message review-message" id="image-review-message" role="status"></p>
+    <div class="image-grid" id="image-grid" aria-live="polite"></div>
+  </section>
+
   <div class="folder-dialog" id="folder-dialog" hidden>
     <div class="folder-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="folder-dialog-title">
       <div class="dialog-heading">
@@ -102,5 +129,3 @@
   </div>
 </main>
 {% endblock %}
-
-
