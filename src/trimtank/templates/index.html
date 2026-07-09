@@ -3,8 +3,104 @@
 {% block body %}
 <main class="page-shell" data-page="index">
   <header class="page-title">
-    <h1>{{ app_name }}</h1>
-    <p>Local image dataset preparation is starting here.</p>
+    <div>
+      <h1>{{ app_name }}</h1>
+      <p>Local image dataset preparation is starting here.</p>
+    </div>
+    <span class="app-meta">v{{ version }}{% if dev %} / dev{% endif %}</span>
   </header>
+
+  <section class="project-panel" id="project-panel" aria-labelledby="project-panel-title">
+    <div class="panel-heading">
+      <div>
+        <h2 id="project-panel-title">Project</h2>
+        <p>Folder on the TrimTank server.</p>
+      </div>
+      <span class="status-pill" id="project-state">No project open</span>
+    </div>
+
+    <div class="project-controls">
+      <label class="field-label" for="project-path">Project folder</label>
+      <div class="path-control">
+        <input
+          type="text"
+          id="project-path"
+          name="project-path"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="F:\Datasets\Example Project"
+        >
+        <button type="button" id="browse-project">Browse</button>
+      </div>
+
+      <div class="project-actions">
+        <button type="button" id="open-project" disabled>Open Project</button>
+        <button type="button" id="create-project" disabled>Create Project</button>
+        <select id="recent-projects" aria-label="Recent projects">
+          <option value="">Recent projects</option>
+        </select>
+      </div>
+
+      <p class="status-message" id="project-message" role="status">Choose or create a project folder.</p>
+    </div>
+  </section>
+
+  <section class="workspace-panel" id="project-workspace" hidden aria-labelledby="workspace-title">
+    <div class="panel-heading">
+      <div>
+        <h2 id="workspace-title">Workspace</h2>
+        <p id="workspace-project-name">No project loaded.</p>
+      </div>
+      <span class="status-pill status-pill-ready">Ready</span>
+    </div>
+    <dl class="project-summary">
+      <div>
+        <dt>Folder</dt>
+        <dd id="workspace-project-path"></dd>
+      </div>
+      <div>
+        <dt>Manifest</dt>
+        <dd id="workspace-manifest-status"></dd>
+      </div>
+    </dl>
+  </section>
+
+  <div class="folder-dialog" id="folder-dialog" hidden>
+    <div class="folder-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="folder-dialog-title">
+      <div class="dialog-heading">
+        <div>
+          <h2 id="folder-dialog-title">Browse folders</h2>
+          <p id="folder-current-path"></p>
+        </div>
+        <button type="button" class="ghost-button" id="close-folder-dialog">Close</button>
+      </div>
+
+      <div class="browser-toolbar">
+        <select id="filesystem-roots" aria-label="Filesystem roots"></select>
+        <button type="button" id="browse-parent">Up</button>
+        <button type="button" id="use-current-folder">Use This Folder</button>
+      </div>
+
+      <ul class="folder-list" id="folder-list" aria-label="Folders"></ul>
+      <p class="status-message" id="folder-message" role="status"></p>
+
+      <div class="new-folder-form">
+        <label class="field-label" for="new-folder-name">New folder</label>
+        <div class="path-control">
+          <input
+            type="text"
+            id="new-folder-name"
+            name="new-folder-name"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="Project name"
+          >
+          <button type="button" id="create-folder">Create Folder</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </main>
 {% endblock %}
+
+

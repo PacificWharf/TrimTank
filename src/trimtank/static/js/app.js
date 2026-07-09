@@ -1,12 +1,16 @@
-(() => {
-  function markJavaScriptReady() {
-    document.documentElement.dataset.js = "ready";
-  }
+import { initProjectPicker } from "./project-picker.js";
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", markJavaScriptReady, { once: true });
-    return;
-  }
+function markJavaScriptReady() {
+  document.documentElement.dataset.js = "ready";
+}
 
+function init() {
   markJavaScriptReady();
-})();
+  initProjectPicker();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init, { once: true });
+} else {
+  init();
+}
