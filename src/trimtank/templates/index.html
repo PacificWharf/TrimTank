@@ -92,6 +92,50 @@
     <div class="image-grid" id="image-grid" aria-live="polite"></div>
   </section>
 
+
+  <div class="crop-dialog" id="crop-dialog" hidden>
+    <div class="crop-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="crop-dialog-title">
+      <div class="dialog-heading">
+        <div>
+          <h2 id="crop-dialog-title">Set Crop</h2>
+          <p id="crop-dialog-filename"></p>
+        </div>
+        <button type="button" class="ghost-button" id="close-crop-dialog">Close</button>
+      </div>
+
+      <div class="crop-aspect-toolbar" aria-label="Crop aspect ratio">
+        <span>Aspect</span>
+        <button type="button" data-crop-aspect="1:1">1:1</button>
+        <button type="button" data-crop-aspect="4:5">4:5</button>
+        <button type="button" data-crop-aspect="3:4">3:4</button>
+        <button type="button" data-crop-aspect="4:3">4:3</button>
+        <button type="button" data-crop-aspect="3:2">3:2</button>
+        <button type="button" data-crop-aspect="free">Free</button>
+      </div>
+
+      <div class="crop-stage" id="crop-stage">
+        <div class="crop-image-wrap" id="crop-image-wrap">
+          <img id="crop-image" alt="">
+          <div class="crop-box" id="crop-box" hidden>
+            <span data-crop-handle="nw" aria-hidden="true"></span>
+            <span data-crop-handle="ne" aria-hidden="true"></span>
+            <span data-crop-handle="sw" aria-hidden="true"></span>
+            <span data-crop-handle="se" aria-hidden="true"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="crop-toolbar">
+        <button type="button" id="save-crop">Save Crop</button>
+        <button type="button" id="use-full-crop">Use Full Image</button>
+        <button type="button" id="clear-crop">Clear Crop</button>
+        <output id="crop-coordinates" aria-live="polite"></output>
+      </div>
+
+      <p class="status-message crop-message" id="crop-message" role="status"></p>
+    </div>
+  </div>
+
   <div class="folder-dialog" id="folder-dialog" hidden>
     <div class="folder-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="folder-dialog-title">
       <div class="dialog-heading">

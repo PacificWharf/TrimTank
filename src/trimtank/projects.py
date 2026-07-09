@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import string
 from datetime import datetime, timezone
@@ -195,14 +196,16 @@ def list_project_images(path: str) -> dict[str, Any]:
 
         record = manifest["training"].get(entry.name, {})
         status = _record_status(record)
+        crop = _record_crop(record)
         images.append(
             {
                 "filename": entry.name,
                 "status": status,
                 "size": entry.stat().st_size,
+                "crop": crop,
+                "has_crop": crop is not None,
             }
         )
-
     return {
         "project": project,
         "inputs_path": str(inputs_path),
@@ -255,6 +258,45 @@ def update_image_status(path: str, filename: str, status: str) -> dict[str, Any]
         "filename": source_path.name,
         "status": _record_status(training.get(source_path.name, {})),
         "counts": list_project_images(str(project_path))["counts"],
+    }
+
+
+def update_image_crop(path: str, filename: str, crop: Any | None) -> dict[str, Any]:
+    project = open_project(path)
+    project_path = Path(project["path"])
+    source_path = get_source_image_path(str(project_path), filename)
+    manifest_path = project_path / MANIFEST_FILENAME
+    manifest = _read_manifest(manifest_path)
+    training = manifest["training"]
+    record = training.get(source_path.name)
+
+    if crop is None:
+        if record is None:
+            pass
+        elif not isinstance(record, dict):
+            raise ValueError(f"Training record for {source_path.name} must be an object.")
+        else:
+            record.pop("crop", None)
+            if not record:
+                training.pop(source_path.name)
+    else:
+        normalized_crop = _normalize_crop(crop)
+        if record is None:
+            record = {}
+            training[source_path.name] = record
+        elif not isinstance(record, dict):
+            raise ValueError(f"Training record for {source_path.name} must be an object.")
+
+        record["crop"] = normalized_crop
+
+    manifest["updated_at"] = _utc_now()
+    _write_manifest(manifest_path, manifest)
+    saved_crop = _record_crop(training.get(source_path.name, {}))
+
+    return {
+        "filename": source_path.name,
+        "crop": saved_crop,
+        "has_crop": saved_crop is not None,
     }
 
 
@@ -430,6 +472,37 @@ def _record_status(record: Any) -> str:
             return status
 
     return UNREVIEWED_STATUS
+
+
+def _record_crop(record: Any) -> dict[str, int] | None:
+    if not isinstance(record, dict) or "crop" not in record:
+        return None
+
+    try:
+        return _normalize_crop(record["crop"])
+    except ValueError:
+        return None
+
+
+def _normalize_crop(crop: Any) -> dict[str, int]:
+    if not isinstance(crop, dict):
+        raise ValueError("Crop must be an object.")
+
+    normalized: dict[str, int] = {}
+    for key in ("x", "y", "width", "height"):
+        value = crop.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"Crop {key} must be a number.")
+        if not math.isfinite(value):
+            raise ValueError(f"Crop {key} must be finite.")
+        normalized[key] = round(value)
+
+    if normalized["x"] < 0 or normalized["y"] < 0:
+        raise ValueError("Crop x and y must be zero or greater.")
+    if normalized["width"] <= 0 or normalized["height"] <= 0:
+        raise ValueError("Crop width and height must be greater than zero.")
+
+    return normalized
 
 
 def _status_counts(images: list[dict[str, Any]]) -> dict[str, int]:

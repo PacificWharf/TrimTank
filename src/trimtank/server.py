@@ -20,6 +20,7 @@ from .projects import (
     inspect_project,
     list_project_images,
     open_project,
+    update_image_crop,
     update_image_status,
 )
 
@@ -45,6 +46,11 @@ class ImageStatusRequest(BaseModel):
     filename: str
     status: str
 
+
+class ImageCropRequest(BaseModel):
+    path: str
+    filename: str
+    crop: dict[str, float] | None = None
 
 def create_app(dev: bool = False) -> FastAPI:
     version = get_version()
@@ -148,8 +154,14 @@ def create_app(dev: bool = False) -> FastAPI:
         except Exception as exc:
             raise _filesystem_error(exc) from exc
 
-    return app
+    @app.post("/api/projects/images/crop")
+    async def project_image_crop(payload: ImageCropRequest) -> dict[str, object]:
+        try:
+            return update_image_crop(payload.path, payload.filename, payload.crop)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
 
+    return app
 
 def _filesystem_error(exc: Exception) -> HTTPException:
     if isinstance(exc, PermissionError):
