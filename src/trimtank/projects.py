@@ -410,19 +410,21 @@ def prepare_training(path: str, confirm_clear_training: bool = False) -> dict[st
     warnings: list[str] = []
 
     for item in _kept_training_items(project_path, manifest):
+        record = manifest["training"][item["filename"]]
+        caption = _record_caption(record, trigger_token)
+        record["caption"] = caption
         try:
             prepared = _prepare_training_item(
                 item=item,
                 output_index=len(generated) + 1,
                 training_path=training_path,
-                trigger_token=trigger_token,
+                caption=caption,
                 settings=settings,
             )
         except Exception as exc:
             warnings.append(f"{item['filename']}: {exc}")
             continue
 
-        record = manifest["training"][item["filename"]]
         record["prepared"] = {
             "image": prepared["image"],
             "caption": prepared["caption"],
@@ -457,15 +459,26 @@ def list_training_outputs(path: str) -> dict[str, Any]:
     project = open_project(path)
     project_path = Path(project["path"])
     training_path = project_path / TRAINING_DIRNAME
+    manifest = _read_manifest(project_path / MANIFEST_FILENAME)
+    prepared_entries = _prepared_record_entries_by_image(manifest)
     outputs: list[dict[str, Any]] = []
 
     for image_path in sorted(training_path.glob("*.png"), key=lambda item: item.name.casefold()):
         caption_path = image_path.with_suffix(".txt")
-        caption = caption_path.read_text(encoding="utf-8") if caption_path.exists() else ""
+        file_caption = (
+            _normalize_caption(caption_path.read_text(encoding="utf-8"))
+            if caption_path.exists()
+            else ""
+        )
+        prepared_entry = prepared_entries.get(image_path.name)
+        source = prepared_entry["source"] if prepared_entry else ""
+        record = prepared_entry["record"] if prepared_entry else {}
+        caption = _record_caption(record, file_caption)
         outputs.append(
             {
                 "filename": image_path.name,
                 "caption_filename": caption_path.name,
+                "source": source,
                 "caption": caption,
                 "size": image_path.stat().st_size,
             }
@@ -484,6 +497,243 @@ def list_training_outputs(path: str) -> dict[str, Any]:
     }
 
 
+def validate_training_handoff(path: str) -> dict[str, Any]:
+    project = open_project(path)
+    project_path = Path(project["path"])
+    training_path = project_path / TRAINING_DIRNAME
+    config_path = training_path / TRAINING_CONFIG_FILENAME
+    manifest = _read_manifest(project_path / MANIFEST_FILENAME)
+    settings = _manifest_settings(manifest)
+    prepared_entries = _prepared_record_entries_by_image(manifest)
+    png_files = {
+        image_path.name: image_path
+        for image_path in sorted(training_path.glob("*.png"), key=lambda item: item.name.casefold())
+    }
+    txt_files = {
+        caption_path.name: caption_path
+        for caption_path in sorted(training_path.glob("*.txt"), key=lambda item: item.name.casefold())
+    }
+    issues: list[dict[str, str]] = []
+
+    def add_issue(
+        check: str,
+        level: str,
+        message: str,
+        filename: str = "",
+        source: str = "",
+    ) -> None:
+        issue = {
+            "check": check,
+            "level": level,
+            "message": message,
+        }
+        if filename:
+            issue["filename"] = filename
+        if source:
+            issue["source"] = source
+        issues.append(issue)
+
+    if not png_files:
+        add_issue("files", "error", "No prepared PNG images were found in the training folder.")
+
+    expected_images = set(prepared_entries)
+    actual_images = set(png_files)
+    for filename in sorted(expected_images - actual_images, key=str.casefold):
+        entry = prepared_entries[filename]
+        add_issue(
+            "manifest",
+            "error",
+            "Manifest prepared record points to a missing PNG file.",
+            filename=filename,
+            source=entry["source"],
+        )
+
+    for filename in sorted(actual_images - expected_images, key=str.casefold):
+        add_issue(
+            "manifest",
+            "error",
+            "Prepared PNG file is not recorded in the manifest.",
+            filename=filename,
+        )
+
+    for filename, image_path in png_files.items():
+        caption_path = image_path.with_suffix(".txt")
+        if not caption_path.exists():
+            add_issue(
+                "captions",
+                "error",
+                "Prepared PNG does not have a matching TXT caption file.",
+                filename=filename,
+            )
+            continue
+
+        file_caption = _normalize_caption(caption_path.read_text(encoding="utf-8"))
+        entry = prepared_entries.get(filename)
+        if entry is None:
+            effective_caption = file_caption
+            source = ""
+        else:
+            source = entry["source"]
+            manifest_caption = _record_caption(entry["record"], "")
+            effective_caption = manifest_caption or file_caption
+            if manifest_caption and file_caption != manifest_caption:
+                add_issue(
+                    "captions",
+                    "error",
+                    "TXT caption does not match the manifest caption.",
+                    filename=caption_path.name,
+                    source=source,
+                )
+
+        if not effective_caption:
+            add_issue(
+                "captions",
+                "error",
+                "Caption is empty.",
+                filename=caption_path.name,
+                source=source,
+            )
+        elif settings["trigger_token"] and settings["trigger_token"] not in effective_caption:
+            add_issue(
+                "captions",
+                "warn",
+                "Caption does not include the trigger token.",
+                filename=caption_path.name,
+                source=source,
+            )
+
+    for filename in sorted(txt_files, key=str.casefold):
+        expected_image = Path(filename).with_suffix(".png").name
+        if expected_image not in png_files:
+            add_issue(
+                "captions",
+                "warn",
+                "TXT caption file does not have a matching prepared PNG.",
+                filename=filename,
+            )
+
+    dimension_checked = 0
+    try:
+        Image, _ImageOps = _pillow_modules()
+    except RuntimeError as exc:
+        add_issue("dimensions", "error", str(exc))
+    else:
+        for filename, image_path in png_files.items():
+            try:
+                with Image.open(image_path) as image:
+                    image.load()
+                    width, height = image.size
+            except Exception as exc:
+                add_issue(
+                    "dimensions",
+                    "error",
+                    f"Could not read prepared PNG dimensions: {exc}",
+                    filename=filename,
+                )
+                continue
+
+            dimension_checked += 1
+            bucket = _bucket_for_dimensions(width, height, settings)
+            if width != bucket["width"] or height != bucket["height"]:
+                add_issue(
+                    "dimensions",
+                    "error",
+                    f"Image is {width} x {height}, expected bucket {bucket['width']} x {bucket['height']}.",
+                    filename=filename,
+                )
+
+            step = settings["bucket_reso_steps"]
+            if width % step or height % step:
+                add_issue(
+                    "dimensions",
+                    "error",
+                    f"Image dimensions are not multiples of bucket step {step}.",
+                    filename=filename,
+                )
+
+            entry = prepared_entries.get(filename)
+            if entry is not None:
+                prepared = entry["prepared"]
+                prepared_width = prepared.get("width")
+                prepared_height = prepared.get("height")
+                if prepared_width != width or prepared_height != height:
+                    add_issue(
+                        "manifest",
+                        "error",
+                        (
+                            f"Manifest records {prepared_width} x {prepared_height}, "
+                            f"but PNG is {width} x {height}."
+                        ),
+                        filename=filename,
+                        source=entry["source"],
+                    )
+
+    if not config_path.exists():
+        add_issue("config", "error", "Kohya dataset config is missing.", filename=TRAINING_CONFIG_FILENAME)
+    else:
+        current_config = config_path.read_text(encoding="utf-8")
+        expected_config = _kohya_config_text(training_path, settings)
+        for issue in _config_mismatch_issues(current_config, expected_config):
+            add_issue(
+                "config",
+                "error",
+                issue,
+                filename=TRAINING_CONFIG_FILENAME,
+            )
+
+    checks = [
+        _validation_check(
+            "files",
+            "Prepared files",
+            f"{len(png_files)} PNG files in training folder.",
+            issues,
+        ),
+        _validation_check(
+            "manifest",
+            "Manifest mappings",
+            f"{len(prepared_entries)} prepared records in manifest.",
+            issues,
+        ),
+        _validation_check(
+            "captions",
+            "Caption pairs",
+            f"{len(txt_files)} TXT caption files in training folder.",
+            issues,
+        ),
+        _validation_check(
+            "dimensions",
+            "Bucket dimensions",
+            f"{dimension_checked} prepared images checked.",
+            issues,
+        ),
+        _validation_check(
+            "config",
+            "Kohya dataset config",
+            TRAINING_CONFIG_FILENAME,
+            issues,
+        ),
+    ]
+    issue_counts = _validation_issue_counts(issues)
+
+    return {
+        "path": str(project_path),
+        "training_path": str(training_path),
+        "config_path": str(config_path),
+        "status": "ready" if issue_counts["error"] == 0 else "blocked",
+        "settings": settings,
+        "image_count": len(png_files),
+        "prepared_count": len(prepared_entries),
+        "caption_count": len(txt_files),
+        "checks": checks,
+        "issues": issues,
+        "issue_counts": issue_counts,
+        "kohya": {
+            "dataset_config": str(config_path),
+            "dataset_config_arg": f"--dataset_config {_quote_command_arg(str(config_path))}",
+        },
+    }
+
+
 def get_training_image_path(path: str, filename: str) -> Path:
     project = open_project(path)
     project_path = Path(project["path"])
@@ -498,6 +748,52 @@ def get_training_image_path(path: str, filename: str) -> Path:
         raise ValueError(f"Training path is not a file: {safe_filename}")
 
     return image_path
+
+
+def update_training_caption(path: str, filename: str, caption: str) -> dict[str, Any]:
+    project = open_project(path)
+    project_path = Path(project["path"])
+    safe_filename = _validate_source_filename(filename)
+    if Path(safe_filename).suffix.casefold() != ".png":
+        raise ValueError("Training image filename must end in .png.")
+
+    training_path = project_path / TRAINING_DIRNAME
+    manifest_path = project_path / MANIFEST_FILENAME
+    manifest = _read_manifest(manifest_path)
+    prepared_entries = _prepared_record_entries_by_image(manifest)
+    prepared_entry = prepared_entries.get(safe_filename)
+    if prepared_entry is None:
+        raise ValueError(f"Prepared image is not recorded in the manifest: {safe_filename}")
+
+    normalized_caption = _normalize_caption(caption)
+    record = prepared_entry["record"]
+    record["caption"] = normalized_caption
+
+    prepared = prepared_entry["prepared"]
+    caption_filename = prepared.get("caption")
+    if isinstance(caption_filename, str) and caption_filename.strip():
+        safe_caption_filename = _validate_source_filename(caption_filename)
+    else:
+        safe_caption_filename = Path(safe_filename).with_suffix(".txt").name
+    if Path(safe_caption_filename).suffix.casefold() != ".txt":
+        raise ValueError("Prepared caption filename must end in .txt.")
+
+    caption_path = training_path / safe_caption_filename
+    caption_file_updated = False
+    if caption_path.exists():
+        caption_path.write_text(_caption_file_text(normalized_caption), encoding="utf-8")
+        caption_file_updated = True
+
+    manifest["updated_at"] = _utc_now()
+    _write_manifest(manifest_path, manifest)
+
+    return {
+        "filename": safe_filename,
+        "source": prepared_entry["source"],
+        "caption_filename": safe_caption_filename,
+        "caption": normalized_caption,
+        "caption_file_updated": caption_file_updated,
+    }
 
 
 def upscale_training_outputs(path: str, confirm_overwrite: bool = False) -> dict[str, Any]:
@@ -714,7 +1010,7 @@ def _prepare_training_item(
     item: dict[str, Any],
     output_index: int,
     training_path: Path,
-    trigger_token: str,
+    caption: str,
     settings: dict[str, Any],
 ) -> dict[str, Any]:
     Image, ImageOps = _pillow_modules()
@@ -744,7 +1040,7 @@ def _prepare_training_item(
         image_name = f"{output_index:03d}.png"
         caption_name = f"{output_index:03d}.txt"
         output.save(training_path / image_name, format="PNG")
-        (training_path / caption_name).write_text(f"{trigger_token}\n", encoding="utf-8")
+        (training_path / caption_name).write_text(_caption_file_text(caption), encoding="utf-8")
 
     return {
         "source": item["filename"],
@@ -808,20 +1104,116 @@ def _lanczos_resampling(Image: Any) -> Any:
 
 
 def _prepared_records_by_image(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        filename: entry["prepared"]
+        for filename, entry in _prepared_record_entries_by_image(manifest).items()
+    }
+
+
+def _prepared_record_entries_by_image(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
     training = manifest.get("training", {})
     if not isinstance(training, dict):
         return records
 
-    for record in training.values():
+    for source, record in training.items():
         if not isinstance(record, dict):
             continue
 
         prepared = record.get("prepared")
         if isinstance(prepared, dict) and isinstance(prepared.get("image"), str):
-            records[prepared["image"]] = prepared
+            records[prepared["image"]] = {
+                "source": source,
+                "record": record,
+                "prepared": prepared,
+            }
 
     return records
+
+
+def _validation_check(
+    check_id: str,
+    label: str,
+    detail: str,
+    issues: list[dict[str, str]],
+) -> dict[str, str]:
+    related = [issue for issue in issues if issue["check"] == check_id]
+    if any(issue["level"] == "error" for issue in related):
+        status = "error"
+    elif any(issue["level"] == "warn" for issue in related):
+        status = "warn"
+    else:
+        status = "ok"
+
+    return {
+        "id": check_id,
+        "label": label,
+        "status": status,
+        "detail": detail,
+    }
+
+
+def _validation_issue_counts(issues: list[dict[str, str]]) -> dict[str, int]:
+    counts = {
+        "error": 0,
+        "warn": 0,
+    }
+    for issue in issues:
+        level = issue.get("level")
+        if level in counts:
+            counts[level] += 1
+
+    return counts
+
+
+def _config_mismatch_issues(current_config: str, expected_config: str) -> list[str]:
+    current_lines = _normalized_config_lines(current_config)
+    expected_lines = _normalized_config_lines(expected_config)
+    if current_lines == expected_lines:
+        return []
+
+    issues: list[str] = []
+    max_lines = max(len(current_lines), len(expected_lines))
+    for index in range(max_lines):
+        current_line = current_lines[index] if index < len(current_lines) else "<missing>"
+        expected_line = expected_lines[index] if index < len(expected_lines) else "<missing>"
+        if current_line == expected_line:
+            continue
+
+        issues.append(
+            (
+                f"Config line {index + 1} differs. Expected {expected_line!r}, "
+                f"found {current_line!r}. Run Prepare for Training to regenerate."
+            )
+        )
+        if len(issues) >= 6:
+            remaining = sum(
+                1
+                for remaining_index in range(index + 1, max_lines)
+                if (
+                    current_lines[remaining_index]
+                    if remaining_index < len(current_lines)
+                    else "<missing>"
+                )
+                != (
+                    expected_lines[remaining_index]
+                    if remaining_index < len(expected_lines)
+                    else "<missing>"
+                )
+            )
+            if remaining:
+                issues.append(f"{remaining} additional config differences not shown.")
+            break
+
+    return issues
+
+
+def _normalized_config_lines(config_text: str) -> list[str]:
+    return [line.rstrip() for line in config_text.strip().splitlines()]
+
+
+def _quote_command_arg(value: str) -> str:
+    return f'"{value.replace(chr(34), chr(92) + chr(34))}"'
 
 
 def _validate_crop_within_image(crop: dict[str, int], width: int, height: int) -> None:
@@ -1066,6 +1458,30 @@ def _record_crop(record: Any) -> dict[str, int] | None:
         return _normalize_crop(record["crop"])
     except ValueError:
         return None
+
+
+def _record_caption(record: Any, default_caption: str = "") -> str:
+    if isinstance(record, dict) and "caption" in record:
+        caption = record.get("caption")
+        if isinstance(caption, str):
+            return _normalize_caption(caption)
+
+    return _normalize_caption(default_caption)
+
+
+def _normalize_caption(caption: str) -> str:
+    if not isinstance(caption, str):
+        raise ValueError("Caption must be text.")
+
+    return caption.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _caption_file_text(caption: str) -> str:
+    normalized_caption = _normalize_caption(caption)
+    if not normalized_caption:
+        return ""
+
+    return f"{normalized_caption}\n"
 
 
 def _normalize_crop(crop: Any) -> dict[str, int]:

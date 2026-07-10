@@ -28,6 +28,8 @@ from .projects import (
     update_image_crop,
     update_project_settings,
     update_image_status,
+    update_training_caption,
+    validate_training_handoff,
 )
 
 
@@ -74,6 +76,12 @@ class UpscaleTrainingRequest(BaseModel):
     confirm_overwrite: bool = False
 
 
+class TrainingCaptionRequest(BaseModel):
+    path: str
+    filename: str
+    caption: str
+
+
 def create_app(dev: bool = False) -> FastAPI:
     version = get_version()
     app = FastAPI(title=APP_NAME, version=version)
@@ -104,6 +112,18 @@ def create_app(dev: bool = False) -> FastAPI:
         return templates.TemplateResponse(
             request=request,
             name="review.html",
+            context={
+                "app_name": APP_NAME,
+                "version": version,
+                "dev": dev,
+            },
+        )
+
+    @app.get("/train", response_class=HTMLResponse)
+    async def training_handoff(request: Request) -> Response:
+        return templates.TemplateResponse(
+            request=request,
+            name="train.html",
             context={
                 "app_name": APP_NAME,
                 "version": version,
@@ -223,6 +243,13 @@ def create_app(dev: bool = False) -> FastAPI:
         except Exception as exc:
             raise _filesystem_error(exc) from exc
 
+    @app.get("/api/projects/training/validation")
+    async def project_training_validation(path: str = Query()) -> dict[str, object]:
+        try:
+            return validate_training_handoff(path)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
     @app.get("/api/projects/training/image")
     async def project_training_image(path: str = Query(), filename: str = Query()) -> FileResponse:
         try:
@@ -235,6 +262,13 @@ def create_app(dev: bool = False) -> FastAPI:
     async def project_training_upscale(payload: UpscaleTrainingRequest) -> dict[str, object]:
         try:
             return upscale_training_outputs(payload.path, payload.confirm_overwrite)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
+    @app.post("/api/projects/training/caption")
+    async def project_training_caption(payload: TrainingCaptionRequest) -> dict[str, object]:
+        try:
+            return update_training_caption(payload.path, payload.filename, payload.caption)
         except Exception as exc:
             raise _filesystem_error(exc) from exc
 

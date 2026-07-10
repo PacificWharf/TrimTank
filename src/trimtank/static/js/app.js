@@ -1,5 +1,6 @@
 import { initImageReview } from "./image-review.js";
 import { initProjectPicker } from "./project-picker.js";
+import { initTrainingHandoff } from "./training-handoff.js";
 import { initTrainingPrep } from "./training-prep.js";
 import { initTrainingReview } from "./training-review.js";
 
@@ -13,6 +14,7 @@ function init() {
   initImageReview();
   initTrainingPrep();
   initTrainingReview();
+  initTrainingHandoff();
 }
 
 if (document.readyState === "loading") {

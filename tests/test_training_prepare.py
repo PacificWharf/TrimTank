@@ -10,9 +10,12 @@ from trimtank.projects import (
     MANIFEST_FILENAME,
     create_project,
     get_project_bucket_stats,
+    list_training_outputs,
     prepare_training,
     upscale_training_outputs,
     update_project_settings,
+    update_training_caption,
+    validate_training_handoff,
 )
 
 
@@ -97,6 +100,144 @@ class TrainingPrepareTests(unittest.TestCase):
             prepared = manifest["training"]["source.png"]["prepared"]
             self.assertEqual(prepared["width"], 1024)
             self.assertEqual(prepared["height"], 1024)
+            self.assertEqual(manifest["training"]["source.png"]["caption"], "sample_token")
+
+    def test_prepare_training_writes_manifest_caption_when_present(self):
+        Image = self._pillow_image()
+
+        with tempfile.TemporaryDirectory() as directory:
+            project_path = Path(directory) / "dataset"
+            self._prepare_sample_project(
+                project_path,
+                Image,
+                (64, 64),
+                (32, 32),
+                caption="sample_token, red background",
+            )
+
+            self.assertEqual(
+                (project_path / "training" / "001.txt").read_text(encoding="utf-8").strip(),
+                "sample_token, red background",
+            )
+
+    def test_update_training_caption_updates_manifest_and_txt(self):
+        Image = self._pillow_image()
+
+        with tempfile.TemporaryDirectory() as directory:
+            project_path = Path(directory) / "dataset"
+            self._prepare_sample_project(project_path, Image, (64, 64), (32, 32))
+
+            result = update_training_caption(
+                str(project_path),
+                "001.png",
+                "sample_token, detailed caption",
+            )
+
+            self.assertEqual(result["filename"], "001.png")
+            self.assertEqual(result["source"], "source.png")
+            self.assertTrue(result["caption_file_updated"])
+            manifest = json.loads((project_path / MANIFEST_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(
+                manifest["training"]["source.png"]["caption"],
+                "sample_token, detailed caption",
+            )
+            self.assertEqual(
+                (project_path / "training" / "001.txt").read_text(encoding="utf-8").strip(),
+                "sample_token, detailed caption",
+            )
+
+    def test_list_training_outputs_prefers_manifest_caption(self):
+        Image = self._pillow_image()
+
+        with tempfile.TemporaryDirectory() as directory:
+            project_path = Path(directory) / "dataset"
+            self._prepare_sample_project(project_path, Image, (64, 64), (32, 32))
+            manifest_path = project_path / MANIFEST_FILENAME
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["training"]["source.png"]["caption"] = "sample_token, manifest caption"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            (project_path / "training" / "001.txt").write_text(
+                "sample_token, stale caption\n",
+                encoding="utf-8",
+            )
+
+            result = list_training_outputs(str(project_path))
+
+            self.assertEqual(result["outputs"][0]["source"], "source.png")
+            self.assertEqual(result["outputs"][0]["caption"], "sample_token, manifest caption")
+
+    def test_update_training_caption_requires_prepared_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_path = Path(directory) / "dataset"
+            create_project(str(project_path))
+
+            with self.assertRaises(ValueError):
+                update_training_caption(str(project_path), "001.png", "sample_token")
+
+    def test_validate_training_handoff_reports_ready_dataset(self):
+        Image = self._pillow_image()
+
+        with tempfile.TemporaryDirectory() as directory:
+            project_path = Path(directory) / "dataset"
+            self._prepare_sample_project(project_path, Image, (64, 64), (32, 32))
+
+            result = validate_training_handoff(str(project_path))
+
+            self.assertEqual(result["status"], "ready")
+            self.assertEqual(result["issue_counts"]["error"], 0)
+            self.assertEqual(result["image_count"], 1)
+            self.assertIn("--dataset_config", result["kohya"]["dataset_config_arg"])
+
+    def test_validate_training_handoff_blocks_empty_captions(self):
+        Image = self._pillow_image()
+
+        with tempfile.TemporaryDirectory() as directory:
+            project_path = Path(directory) / "dataset"
+            self._prepare_sample_project(project_path, Image, (64, 64), (32, 32))
+            update_training_caption(str(project_path), "001.png", "")
+
+            result = validate_training_handoff(str(project_path))
+
+            self.assertEqual(result["status"], "blocked")
+            self.assertGreater(result["issue_counts"]["error"], 0)
+            self.assertTrue(
+                any(issue["check"] == "captions" and issue["level"] == "error" for issue in result["issues"])
+            )
+
+    def test_validate_training_handoff_blocks_stale_config(self):
+        Image = self._pillow_image()
+
+        with tempfile.TemporaryDirectory() as directory:
+            project_path = Path(directory) / "dataset"
+            self._prepare_sample_project(project_path, Image, (64, 64), (32, 32))
+            (project_path / "training" / "kohya_dataset.toml").write_text(
+                "stale config\n",
+                encoding="utf-8",
+            )
+
+            result = validate_training_handoff(str(project_path))
+
+            self.assertEqual(result["status"], "blocked")
+            self.assertTrue(
+                any(issue["check"] == "config" and issue["level"] == "error" for issue in result["issues"])
+            )
+            self.assertTrue(
+                any("Config line" in issue["message"] for issue in result["issues"])
+            )
+
+    def test_validate_training_handoff_blocks_bad_dimensions(self):
+        Image = self._pillow_image()
+
+        with tempfile.TemporaryDirectory() as directory:
+            project_path = Path(directory) / "dataset"
+            self._create_legacy_prepared_project(project_path, Image, (1023, 1024))
+
+            result = validate_training_handoff(str(project_path))
+
+            self.assertEqual(result["status"], "blocked")
+            self.assertTrue(
+                any(issue["check"] == "dimensions" and issue["level"] == "error" for issue in result["issues"])
+            )
 
     def test_prepare_training_writes_exact_non_square_bucket(self):
         Image = self._pillow_image()
@@ -182,17 +323,21 @@ class TrainingPrepareTests(unittest.TestCase):
         Image,
         source_size: tuple[int, int],
         crop_size: tuple[int, int],
+        caption: str | None = None,
     ) -> None:
         create_project(str(project_path))
         source_path = project_path / "inputs" / "source.png"
         Image.new("RGB", source_size, color=(255, 0, 0)).save(source_path)
+        record = {
+            "status": "keep",
+            "crop": {"x": 0, "y": 0, "width": crop_size[0], "height": crop_size[1]},
+        }
+        if caption is not None:
+            record["caption"] = caption
         self._write_training_record(
             project_path,
             "source.png",
-            {
-                "status": "keep",
-                "crop": {"x": 0, "y": 0, "width": crop_size[0], "height": crop_size[1]},
-            },
+            record,
         )
         update_project_settings(str(project_path), {"trigger_token": "sample_token"})
         prepare_training(str(project_path), confirm_clear_training=True)

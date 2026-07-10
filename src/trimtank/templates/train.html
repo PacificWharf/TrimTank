@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Train Handoff - {{ app_name }}{% endblock %}
+
+{% block body %}
+<main class="page-shell" data-page="training-handoff">
+  <header class="page-title">
+    <div>
+      <h1>Train Handoff</h1>
+      <p id="train-handoff-path">No project selected.</p>
+    </div>
+    <a class="text-link" id="train-review-link" href="/review">Back to review</a>
+  </header>
+
+  <section class="train-panel" aria-labelledby="validation-report-title">
+    <div class="panel-heading">
+      <div>
+        <h2 id="validation-report-title">Validation Report</h2>
+        <p id="validation-summary">Load training validation.</p>
+      </div>
+      <div class="panel-actions">
+        <button type="button" id="refresh-validation">Refresh</button>
+        <span class="status-pill" id="validation-status">Not checked</span>
+      </div>
+    </div>
+
+    <p class="status-message review-message" id="train-handoff-message" role="status"></p>
+    <div class="validation-report">
+      <div class="validation-check-list" id="validation-checks" aria-live="polite"></div>
+      <div class="validation-issue-list" id="validation-issues"></div>
+    </div>
+  </section>
+
+  <section class="train-panel" aria-labelledby="kohya-handoff-title">
+    <div class="panel-heading">
+      <div>
+        <h2 id="kohya-handoff-title">Kohya Handoff</h2>
+        <p id="kohya-handoff-summary">Dataset paths from the prepared training folder.</p>
+      </div>
+    </div>
+
+    <dl class="handoff-fields">
+      <div>
+        <dt>Training folder</dt>
+        <dd id="handoff-training-path">-</dd>
+      </div>
+      <div>
+        <dt>Dataset config</dt>
+        <dd id="handoff-config-path">-</dd>
+      </div>
+      <div>
+        <dt>Kohya argument</dt>
+        <dd><code id="handoff-config-arg">-</code></dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="train-panel" aria-labelledby="kohya-settings-title">
+    <div class="panel-heading">
+      <div>
+        <h2 id="kohya-settings-title">Kohya Settings</h2>
+        <p>Placeholder controls for trainer settings.</p>
+      </div>
+    </div>
+
+    <div class="kohya-settings-grid">
+      <label>
+        <span class="field-label">Base model</span>
+        <input type="text" disabled>
+      </label>
+      <label>
+        <span class="field-label">Output name</span>
+        <input type="text" disabled>
+      </label>
+      <label>
+        <span class="field-label">Output folder</span>
+        <input type="text" disabled>
+      </label>
+      <label>
+        <span class="field-label">Network rank</span>
+        <input type="number" disabled>
+      </label>
+      <label>
+        <span class="field-label">Learning rate</span>
+        <input type="text" disabled>
+      </label>
+      <label>
+        <span class="field-label">Epochs</span>
+        <input type="number" disabled>
+      </label>
+    </div>
+  </section>
+</main>
+{% endblock %}
