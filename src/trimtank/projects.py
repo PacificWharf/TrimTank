@@ -416,6 +416,7 @@ def prepare_training(path: str, confirm_clear_training: bool = False) -> dict[st
                 output_index=len(generated) + 1,
                 training_path=training_path,
                 trigger_token=trigger_token,
+                settings=settings,
             )
         except Exception as exc:
             warnings.append(f"{item['filename']}: {exc}")
@@ -499,6 +500,53 @@ def get_training_image_path(path: str, filename: str) -> Path:
     return image_path
 
 
+def upscale_training_outputs(path: str, confirm_overwrite: bool = False) -> dict[str, Any]:
+    if not confirm_overwrite:
+        raise ValueError("Upscaling training files requires confirmation.")
+
+    project = open_project(path)
+    project_path = Path(project["path"])
+    training_path = project_path / TRAINING_DIRNAME
+    manifest_path = project_path / MANIFEST_FILENAME
+    manifest = _read_manifest(manifest_path)
+    settings = _manifest_settings(manifest)
+    prepared_records = _prepared_records_by_image(manifest)
+    _require_pillow()
+
+    changed: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    for image_path in sorted(training_path.glob("*.png"), key=lambda item: item.name.casefold()):
+        try:
+            result = _upscale_training_image(image_path, settings)
+        except Exception as exc:
+            warnings.append(f"{image_path.name}: {exc}")
+            continue
+
+        if result["changed"]:
+            prepared_record = prepared_records.get(image_path.name)
+            if prepared_record is not None:
+                prepared_record["width"] = result["new_width"]
+                prepared_record["height"] = result["new_height"]
+            changed.append(result)
+        else:
+            skipped.append(result)
+
+    manifest["updated_at"] = _utc_now()
+    _write_manifest(manifest_path, manifest)
+
+    return {
+        "path": str(project_path),
+        "training_path": str(training_path),
+        "changed_count": len(changed),
+        "skipped_count": len(skipped),
+        "changed": changed,
+        "skipped": skipped,
+        "warnings": warnings,
+    }
+
+
 def get_source_image_path(path: str, filename: str) -> Path:
     project = open_project(path)
     project_path = Path(project["path"])
@@ -530,6 +578,19 @@ def _normalize_training_settings(settings: Any) -> dict[str, Any]:
 
     if normalized["min_bucket_reso"] > normalized["max_bucket_reso"]:
         raise ValueError("Minimum bucket resolution must be less than or equal to maximum.")
+
+    step = normalized["bucket_reso_steps"]
+    normalized["min_bucket_reso"] = max(
+        step,
+        normalized["min_bucket_reso"] - normalized["min_bucket_reso"] % step,
+    )
+    if normalized["max_bucket_reso"] % step:
+        normalized["max_bucket_reso"] += step - normalized["max_bucket_reso"] % step
+
+    if normalized["enable_bucket"] and normalized["min_bucket_reso"] > normalized["resolution"]:
+        raise ValueError("Minimum bucket resolution must be less than or equal to target resolution.")
+    if normalized["enable_bucket"] and normalized["max_bucket_reso"] < normalized["resolution"]:
+        raise ValueError("Maximum bucket resolution must be greater than or equal to target resolution.")
 
     return normalized
 
@@ -607,17 +668,16 @@ def _bucket_for_dimensions(width: int, height: int, settings: dict[str, Any]) ->
     if not settings["enable_bucket"]:
         return {"width": resolution, "height": resolution}
 
-    step = settings["bucket_reso_steps"]
-    min_resolution = settings["min_bucket_reso"]
-    max_resolution = settings["max_bucket_reso"]
+    exact_resolution = (width, height)
+    bucket_resolutions = _bucket_resolutions(settings)
+    if exact_resolution in set(bucket_resolutions):
+        return {"width": width, "height": height}
+
     aspect_ratio = width / height
-    target_area = resolution * resolution
-    bucket_width = math.sqrt(target_area * aspect_ratio)
-    bucket_height = target_area / bucket_width
-    bucket_width = _round_to_step(bucket_width, step)
-    bucket_height = _round_to_step(bucket_height, step)
-    bucket_width = _clamp_int(bucket_width, min_resolution, max_resolution)
-    bucket_height = _clamp_int(bucket_height, min_resolution, max_resolution)
+    bucket_width, bucket_height = min(
+        bucket_resolutions,
+        key=lambda size: abs((size[0] / size[1]) - aspect_ratio),
+    )
 
     return {
         "width": bucket_width,
@@ -625,12 +685,29 @@ def _bucket_for_dimensions(width: int, height: int, settings: dict[str, Any]) ->
     }
 
 
-def _round_to_step(value: float, step: int) -> int:
-    return max(step, round(value / step) * step)
+def _bucket_resolutions(settings: dict[str, Any]) -> list[tuple[int, int]]:
+    resolution = settings["resolution"]
+    step = settings["bucket_reso_steps"]
+    min_resolution = settings["min_bucket_reso"]
+    max_resolution = settings["max_bucket_reso"]
+    target_area = resolution * resolution
+    resolutions: set[tuple[int, int]] = set()
+    square_resolution = int(math.sqrt(target_area) // step) * step
+    if square_resolution > 0:
+        resolutions.add((square_resolution, square_resolution))
 
+    bucket_width = min_resolution
+    while bucket_width <= max_resolution:
+        bucket_height = min(
+            max_resolution,
+            int((target_area // bucket_width) // step) * step,
+        )
+        if bucket_height >= min_resolution:
+            resolutions.add((bucket_width, bucket_height))
+            resolutions.add((bucket_height, bucket_width))
+        bucket_width += step
 
-def _clamp_int(value: int, minimum: int, maximum: int) -> int:
-    return min(max(value, minimum), maximum)
+    return sorted(resolutions) or [(resolution, resolution)]
 
 
 def _prepare_training_item(
@@ -638,6 +715,7 @@ def _prepare_training_item(
     output_index: int,
     training_path: Path,
     trigger_token: str,
+    settings: dict[str, Any],
 ) -> dict[str, Any]:
     Image, ImageOps = _pillow_modules()
     source_path = item["source_path"]
@@ -661,7 +739,8 @@ def _prepare_training_item(
                 )
             )
 
-        output = image.convert("RGB")
+        bucket = _bucket_for_dimensions(image.width, image.height, settings)
+        output = _resize_to_exact_bucket(image, bucket, Image)
         image_name = f"{output_index:03d}.png"
         caption_name = f"{output_index:03d}.txt"
         output.save(training_path / image_name, format="PNG")
@@ -674,6 +753,75 @@ def _prepare_training_item(
         "width": output.width,
         "height": output.height,
     }
+
+
+def _upscale_training_image(image_path: Path, settings: dict[str, Any]) -> dict[str, Any]:
+    Image, _ImageOps = _pillow_modules()
+    with Image.open(image_path) as source_image:
+        source_image.load()
+        width, height = source_image.size
+        bucket = _bucket_for_dimensions(width, height, settings)
+
+        result = {
+            "filename": image_path.name,
+            "old_width": width,
+            "old_height": height,
+            "new_width": width,
+            "new_height": height,
+            "bucket_width": bucket["width"],
+            "bucket_height": bucket["height"],
+            "changed": False,
+        }
+
+        if width == bucket["width"] and height == bucket["height"]:
+            return result
+
+        output = _resize_to_exact_bucket(source_image, bucket, Image)
+        output.save(image_path, format="PNG")
+        result["new_width"] = bucket["width"]
+        result["new_height"] = bucket["height"]
+        result["changed"] = True
+        return result
+
+
+def _resize_to_exact_bucket(image: Any, bucket: dict[str, int], Image: Any) -> Any:
+    target_width = bucket["width"]
+    target_height = bucket["height"]
+    output = image.convert("RGB")
+    if output.width == target_width and output.height == target_height:
+        return output
+
+    scale = max(target_width / output.width, target_height / output.height)
+    resized_width = max(target_width, math.ceil(output.width * scale))
+    resized_height = max(target_height, math.ceil(output.height * scale))
+    output = output.resize(
+        (resized_width, resized_height),
+        resample=_lanczos_resampling(Image),
+    )
+    left = max(0, (resized_width - target_width) // 2)
+    top = max(0, (resized_height - target_height) // 2)
+    return output.crop((left, top, left + target_width, top + target_height))
+
+
+def _lanczos_resampling(Image: Any) -> Any:
+    return getattr(getattr(Image, "Resampling", Image), "LANCZOS")
+
+
+def _prepared_records_by_image(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    training = manifest.get("training", {})
+    if not isinstance(training, dict):
+        return records
+
+    for record in training.values():
+        if not isinstance(record, dict):
+            continue
+
+        prepared = record.get("prepared")
+        if isinstance(prepared, dict) and isinstance(prepared.get("image"), str):
+            records[prepared["image"]] = prepared
+
+    return records
 
 
 def _validate_crop_within_image(crop: dict[str, int], width: int, height: int) -> None:
@@ -710,6 +858,8 @@ def _kohya_config_text(training_path: Path, settings: dict[str, Any]) -> str:
             f"bucket_reso_steps = {settings['bucket_reso_steps']}",
             f"min_bucket_reso = {settings['min_bucket_reso']}",
             f"max_bucket_reso = {settings['max_bucket_reso']}",
+            'resize_interpolation = "lanczos"',
+            "random_crop = false",
             "",
             "[[datasets]]",
             f"resolution = [{settings['resolution']}, {settings['resolution']}]",

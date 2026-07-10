@@ -139,6 +139,15 @@ button:focus-visible {
   border-bottom: 1px solid var(--border);
 }
 
+.panel-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .panel-heading h2,
 .dialog-heading h2 {
   margin: 0 0 6px;

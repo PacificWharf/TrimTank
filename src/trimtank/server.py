@@ -24,6 +24,7 @@ from .projects import (
     list_project_images,
     open_project,
     prepare_training,
+    upscale_training_outputs,
     update_image_crop,
     update_project_settings,
     update_image_status,
@@ -66,6 +67,12 @@ class ProjectSettingsUpdateRequest(BaseModel):
 class PrepareTrainingRequest(BaseModel):
     path: str
     confirm_clear_training: bool = False
+
+
+class UpscaleTrainingRequest(BaseModel):
+    path: str
+    confirm_overwrite: bool = False
+
 
 def create_app(dev: bool = False) -> FastAPI:
     version = get_version()
@@ -221,6 +228,13 @@ def create_app(dev: bool = False) -> FastAPI:
         try:
             image_path = get_training_image_path(path, filename)
             return FileResponse(image_path)
+        except Exception as exc:
+            raise _filesystem_error(exc) from exc
+
+    @app.post("/api/projects/training/upscale")
+    async def project_training_upscale(payload: UpscaleTrainingRequest) -> dict[str, object]:
+        try:
+            return upscale_training_outputs(payload.path, payload.confirm_overwrite)
         except Exception as exc:
             raise _filesystem_error(exc) from exc
 

@@ -18,11 +18,36 @@
         <h2 id="training-review-title">Prepared Images</h2>
         <p id="training-review-summary">Load prepared training outputs.</p>
       </div>
-      <span class="status-pill" id="training-review-count">0 images</span>
+      <div class="panel-actions">
+        <button type="button" id="upscale-training" disabled>Upscale</button>
+        <span class="status-pill" id="training-review-count">0 images</span>
+      </div>
     </div>
 
     <p class="status-message review-message" id="training-review-message" role="status"></p>
     <div class="training-output-grid" id="training-output-grid" aria-live="polite"></div>
   </section>
+
+  <div class="confirm-dialog" id="upscale-confirm-dialog" hidden>
+    <div class="confirm-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="upscale-confirm-title">
+      <div class="dialog-heading">
+        <div>
+          <h2 id="upscale-confirm-title">Upscale Prepared Images</h2>
+          <p>This will overwrite prepared PNG files in the training folder.</p>
+        </div>
+      </div>
+
+      <div class="confirm-dialog-body">
+        <p>TrimTank will resize prepared images to their exact assigned bucket sizes.</p>
+        <p>TXT captions and the Kohya dataset config will not be changed.</p>
+        <p id="upscale-confirm-path"></p>
+      </div>
+
+      <div class="confirm-dialog-actions">
+        <button type="button" class="ghost-button" id="cancel-upscale-training">Cancel</button>
+        <button type="button" id="confirm-upscale-training">Overwrite and Resize</button>
+      </div>
+    </div>
+  </div>
 </main>
 {% endblock %}
